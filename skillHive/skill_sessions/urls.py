@@ -1,0 +1,112 @@
+from django.urls import path
+
+from .views import (
+    list_sessions,
+    my_sessions,
+    create_session,
+    session_detail,
+    delete_session,
+    enroll_session,
+    leave_session,
+    start_session_view,
+    end_session_view,
+    cancel_session_view,
+    join_attendance_view,
+    heartbeat_attendance,
+    leave_attendance_view,
+    my_session_attendance,
+    session_attendance_list,
+)
+
+
+urlpatterns = [
+    path(
+        "",
+        list_sessions,
+        name="session-list",
+    ),
+
+    path(
+        "my/",
+        my_sessions,
+        name="my-sessions",
+    ),
+    path(
+        "mine/",
+        my_sessions,
+        name="my-sessions-legacy",
+    ),
+    path(
+        "create/",
+        create_session,
+        name="session-create",
+    ),
+    path(
+        "<int:session_id>/update/",
+        session_detail,
+        name="session-update",
+    ),
+
+    path(
+        "<int:session_id>/delete/",
+        delete_session,
+        name="session-delete",
+    ),
+    path(
+        "<int:session_id>/enroll/",
+        enroll_session,
+        name="session-enroll",
+    ),
+
+    path(
+        "<int:session_id>/leave/",
+        leave_session,
+        name="session-leave",
+    ),
+    path(
+        "<int:session_id>/start/",
+        start_session_view,
+        name="session-start",
+    ),
+    path(
+        "<int:session_id>/end/",
+        end_session_view,
+        name="session-end",
+    ),
+    path(
+        "<int:session_id>/cancel/",
+        cancel_session_view,
+        name="session-cancel",
+    ),
+    path(
+        "<int:session_id>/attendance/join/",
+        join_attendance_view,
+        name="attendance-join",
+    ),
+    path(
+        "<int:session_id>/attendance/heartbeat/",
+        heartbeat_attendance,
+        name="attendance-heartbeat",
+    ),
+    path(
+        "<int:session_id>/attendance/leave/",
+        leave_attendance_view,
+        name="attendance-leave",
+    ),
+    path(
+        "<int:session_id>/attendance/me/",
+        my_session_attendance,
+        name="my-session-attendance",
+    ),
+    path(
+        "<int:session_id>/attendance/",
+        session_attendance_list,
+        name="session-attendance-list",
+    ),
+    path(
+        "<int:session_id>/",
+        session_detail,
+        name="session-detail",
+    ),
+]
+
