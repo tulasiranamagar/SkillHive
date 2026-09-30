@@ -1,6 +1,7 @@
-from django.contrib.auth import get_user_model
-from django.utils.encoding import force_str
-from django.utils.http import urlsafe_base64_decode
+from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.db import transaction
+from django.utils import timezone
 
 from rest_framework import serializers
 
@@ -16,51 +17,15 @@ from .models import (
     VerificationRequest,
 )
 
-User = get_user_model()
-
-
-def get_safe_full_name(user):
-    return (
-        user.get_full_name().strip()
-        or getattr(user, "username", "")
-        or getattr(user, "email", "")
-        or ""
-    )
-
-
-def get_total_xp_safe(user):
-    try:
-        from gamification.services import get_total_xp
-
-        return int(get_total_xp(user))
-    except Exception:
-        return 0
-
-
-def get_user_level_safe(user):
-    try:
-        from gamification.services import get_user_level
-
-        return int(get_user_level(user))
-    except Exception:
-        return 1
-
-
 class UserBasicSerializer(serializers.ModelSerializer):
-    full_name = serializers.SerializerMethodField()
-
     class Meta:
         model = User
         fields = [
             "id",
             "username",
-            "email",
-            "full_name",
+            "first_name",
+            "last_name",
         ]
-        read_only_fields = fields
-
-    def get_full_name(self, obj):
-        return get_safe_full_name(obj)
 
 
 class UserPublicSerializer(serializers.ModelSerializer):
@@ -71,36 +36,33 @@ class UserPublicSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "username",
+            "first_name",
+            "last_name",
             "full_name",
         ]
-        read_only_fields = fields
 
     def get_full_name(self, obj):
-        return get_safe_full_name(obj)
+        return (
+            obj.get_full_name().strip()
+            or obj.username
+        )
 
 
 class UserSerializer(serializers.ModelSerializer):
-    full_name = serializers.SerializerMethodField()
-
     class Meta:
         model = User
         fields = [
             "id",
             "username",
             "email",
-            "full_name",
             "first_name",
             "last_name",
+            "date_joined",
         ]
         read_only_fields = [
             "id",
-            "username",
-            "email",
-            "full_name",
+            "date_joined",
         ]
-
-    def get_full_name(self, obj):
-        return get_safe_full_name(obj)
 
 
 class ProfileLinkSerializer(serializers.ModelSerializer):
@@ -121,104 +83,89 @@ class ProfileLinkSerializer(serializers.ModelSerializer):
         ]
 
     def validate_url(self, value):
-        value = value.strip()
-
-        if not value:
-            raise serializers.ValidationError(
-                "URL cannot be empty."
-            )
-
-        return value
-
-    def validate_label(self, value):
         return value.strip()
 
 
-def serialize_skill_items(user, skill_type):
-    from skills.models import UserSkill
-
-    queryset = (
-        UserSkill.objects
-        .filter(
-            user=user,
-            skill_type=skill_type,
-        )
-        .select_related("skill")
-        .order_by(
-            "skill__name",
-            "id",
-        )
-    )
-
-    return [
-        {
-            "id": item.id,
-            "skill": item.skill_id,
-            "skill_detail": {
-                "id": item.skill.id,
-                "name": item.skill.name,
-                "description": item.skill.description,
-            },
-            "skill_type": item.skill_type,
-            "level": item.level,
-            "experience_years": item.experience_years,
-            "created_at": item.created_at,
-            "updated_at": item.updated_at,
-        }
-        for item in queryset
-    ]
-
-
-def serialize_user_interests(user):
-    from skills.models import UserInterest
-
-    queryset = (
-        UserInterest.objects
-        .filter(user=user)
-        .select_related("skill")
-        .order_by("skill__name", "id")
-    )
-
-    return [
-        {
-            "id": item.id,
-            "skill": item.skill_id,
-            "skill_detail": {
-                "id": item.skill.id,
-                "name": item.skill.name,
-                "description": item.skill.description,
-            },
-            "created_at": item.created_at,
-        }
-        for item in queryset
-    ]
-
-
-def serialize_active_career_goal(user):
-    from goals.models import UserGoal
-
-    user_goal = (
-        UserGoal.objects
-        .filter(
-            user=user,
-            is_active=True,
-        )
-        .select_related("goal")
-        .first()
-    )
-
-    if not user_goal:
-        return None
-
-    return {
-        "id": user_goal.goal.id,
-        "title": user_goal.goal.title,
-        "description": user_goal.goal.description,
-        "user_goal_id": user_goal.id,
-    }
-
 
 class ProfileSerializer(serializers.ModelSerializer):
+    user = UserBasicSerializer(read_only=True)
+
+    full_name = serializers.CharField(
+        read_only=True,
+    )
+
+    links = ProfileLinkSerializer(
+        many=True,
+        read_only=True,
+    )
+
+    followers_count = serializers.IntegerField(
+        read_only=True,
+    )
+
+    following_count = serializers.IntegerField(
+        read_only=True,
+    )
+
+    class Meta:
+        model = Profile
+        fields = [
+            "id",
+            "user",
+            "full_name",
+            "profile_picture",
+            "cover_picture",
+            "bio",
+            "country",
+            "city",
+            "date_of_birth",
+            "github_url",
+            "linkedin_url",
+            "portfolio_url",
+            "role",
+            "is_verified",
+            "verification_requested_at",
+            "verification_approved_at",
+            "verification_note",
+            "onboarding_completed",
+            "onboarding_skipped",
+            "onboarding_completed_at",
+            "deactivation_requested_at",
+            "deactivation_scheduled_for",
+            "permanently_deactivated",
+            "is_active",
+            "followers_count",
+            "following_count",
+            "links",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "user",
+            "full_name",
+            "role",
+            "is_verified",
+            "verification_requested_at",
+            "verification_approved_at",
+            "verification_note",
+            "onboarding_completed",
+            "onboarding_skipped",
+            "onboarding_completed_at",
+            "deactivation_requested_at",
+            "deactivation_scheduled_for",
+            "permanently_deactivated",
+            "is_active",
+            "followers_count",
+            "following_count",
+            "links",
+            "created_at",
+            "updated_at",
+        ]
+
+
+
+class PublicProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(
         source="user.username",
         read_only=True,
@@ -229,295 +176,65 @@ class ProfileSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
-    full_name = serializers.SerializerMethodField()
+    first_name = serializers.CharField(
+        source="user.first_name",
+        read_only=True,
+    )
+
+    last_name = serializers.CharField(
+        source="user.last_name",
+        read_only=True,
+    )
+
+    full_name = serializers.CharField(
+        read_only=True,
+    )
 
     links = ProfileLinkSerializer(
         many=True,
         read_only=True,
     )
 
-    known_skills = serializers.SerializerMethodField()
-    wanted_skills = serializers.SerializerMethodField()
-    interests = serializers.SerializerMethodField()
-    career_goal = serializers.SerializerMethodField()
+    followers_count = serializers.IntegerField(
+        read_only=True,
+    )
 
-    xp = serializers.SerializerMethodField()
-    level = serializers.SerializerMethodField()
-
-    followers_count = serializers.SerializerMethodField()
-    following_count = serializers.SerializerMethodField()
+    following_count = serializers.IntegerField(
+        read_only=True,
+    )
 
     class Meta:
         model = Profile
-
         fields = [
             "id",
-            "user",
             "username",
             "email",
+            "first_name",
+            "last_name",
             "full_name",
-
             "profile_picture",
             "cover_picture",
             "bio",
             "country",
             "city",
-            "date_of_birth",
-
             "github_url",
             "linkedin_url",
             "portfolio_url",
-
             "role",
             "is_verified",
-
-            "verification_requested_at",
-            "verification_approved_at",
-            "verification_note",
-
-            "onboarding_completed",
-            "onboarding_skipped",
-            "onboarding_completed_at",
-
-            "deactivation_requested_at",
-            "deactivation_scheduled_for",
-            "is_active",
-
-            "known_skills",
-            "wanted_skills",
-            "interests",
-            "career_goal",
-
+            "followers_count",
+            "following_count",
             "links",
-            "xp",
-            "level",
-
-            "followers_count",
-            "following_count",
-
-            "created_at",
-            "updated_at",
-        ]
-
-        read_only_fields = [
-            "id",
-            "user",
-            "username",
-            "email",
-            "full_name",
-
-            "role",
-            "is_verified",
-
-            "verification_requested_at",
-            "verification_approved_at",
-            "verification_note",
-
-            "onboarding_completed",
-            "onboarding_skipped",
-            "onboarding_completed_at",
-
-            "deactivation_requested_at",
-            "deactivation_scheduled_for",
-            "is_active",
-
-            "known_skills",
-            "wanted_skills",
-            "interests",
-            "career_goal",
-
-            "links",
-            "xp",
-            "level",
-
-            "followers_count",
-            "following_count",
-
-            "created_at",
-            "updated_at",
-        ]
-
-    def get_full_name(self, obj):
-        return get_safe_full_name(obj.user)
-
-    def get_known_skills(self, obj):
-        return serialize_skill_items(
-            obj.user,
-            "known",
-        )
-
-    def get_wanted_skills(self, obj):
-        return serialize_skill_items(
-            obj.user,
-            "wanted",
-        )
-
-    def get_interests(self, obj):
-        return serialize_user_interests(obj.user)
-
-    def get_career_goal(self, obj):
-        return serialize_active_career_goal(obj.user)
-
-    def get_xp(self, obj):
-        return get_total_xp_safe(obj.user)
-
-    def get_level(self, obj):
-        return get_user_level_safe(obj.user)
-
-    def get_followers_count(self, obj):
-        annotated = getattr(
-            obj,
-            "followers_count",
-            None,
-        )
-
-        if annotated is not None:
-            return int(annotated)
-
-        return Follow.objects.filter(
-            following=obj.user
-        ).count()
-
-    def get_following_count(self, obj):
-        annotated = getattr(
-            obj,
-            "following_count",
-            None,
-        )
-
-        if annotated is not None:
-            return int(annotated)
-
-        return Follow.objects.filter(
-            follower=obj.user
-        ).count()
-
-
-class PublicProfileSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(
-        source="user.username",
-        read_only=True,
-    )
-
-    full_name = serializers.SerializerMethodField()
-
-    links = ProfileLinkSerializer(
-        many=True,
-        read_only=True,
-    )
-
-    known_skills = serializers.SerializerMethodField()
-    wanted_skills = serializers.SerializerMethodField()
-    interests = serializers.SerializerMethodField()
-    career_goal = serializers.SerializerMethodField()
-
-    xp = serializers.SerializerMethodField()
-    level = serializers.SerializerMethodField()
-
-    followers_count = serializers.SerializerMethodField()
-    following_count = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Profile
-
-        fields = [
-            "id",
-            "user",
-            "username",
-            "full_name",
-
-            "profile_picture",
-            "cover_picture",
-
-            "bio",
-            "country",
-            "city",
-
-            "github_url",
-            "linkedin_url",
-            "portfolio_url",
-
-            "role",
-            "is_verified",
-
-            "known_skills",
-            "wanted_skills",
-            "interests",
-            "career_goal",
-
-            "links",
-
-            "xp",
-            "level",
-
-            "followers_count",
-            "following_count",
-
             "created_at",
         ]
-
         read_only_fields = fields
-
-    def get_full_name(self, obj):
-        return get_safe_full_name(obj.user)
-
-    def get_known_skills(self, obj):
-        return serialize_skill_items(
-            obj.user,
-            "known",
-        )
-
-    def get_wanted_skills(self, obj):
-        return serialize_skill_items(
-            obj.user,
-            "wanted",
-        )
-
-    def get_interests(self, obj):
-        return serialize_user_interests(obj.user)
-
-    def get_career_goal(self, obj):
-        return serialize_active_career_goal(obj.user)
-
-    def get_xp(self, obj):
-        return get_total_xp_safe(obj.user)
-
-    def get_level(self, obj):
-        return get_user_level_safe(obj.user)
-
-    def get_followers_count(self, obj):
-        annotated = getattr(
-            obj,
-            "followers_count",
-            None,
-        )
-
-        if annotated is not None:
-            return int(annotated)
-
-        return Follow.objects.filter(
-            following=obj.user
-        ).count()
-
-    def get_following_count(self, obj):
-        annotated = getattr(
-            obj,
-            "following_count",
-            None,
-        )
-
-        if annotated is not None:
-            return int(annotated)
-
-        return Follow.objects.filter(
-            follower=obj.user
-        ).count()
 
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(
         write_only=True,
         min_length=8,
+        validators=[validate_password],
     )
 
     password_confirm = serializers.CharField(
@@ -555,6 +272,11 @@ class RegisterSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         value = value.strip().lower()
 
+        if not value:
+            raise serializers.ValidationError(
+                "Email is required."
+            )
+
         if User.objects.filter(
             email__iexact=value
         ).exists():
@@ -562,12 +284,21 @@ class RegisterSerializer(serializers.ModelSerializer):
                 "A user with this email already exists."
             )
 
-        from .services import is_identifier_banned
+        now = timezone.now()
 
-        if is_identifier_banned(
-            identifier_type=BannedIdentifier.TYPE_EMAIL,
-            identifier=value,
-        ):
+        banned = (
+            BannedIdentifier.objects.filter(
+                identifier_type=BannedIdentifier.TYPE_EMAIL,
+                identifier__iexact=value,
+                is_active=True,
+                starts_at__lte=now,
+            )
+            .filter(
+                models_q_expiry()
+            )
+        )
+
+        if banned.exists():
             raise serializers.ValidationError(
                 "This email address cannot be used to create an account."
             )
@@ -575,39 +306,28 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        if (
-            attrs["password"]
-            != attrs["password_confirm"]
-        ):
-            raise serializers.ValidationError(
-                {
-                    "password_confirm":
-                        "Passwords do not match."
-                }
-            )
+        password = attrs.get("password")
+        password_confirm = attrs.pop(
+            "password_confirm",
+            None,
+        )
+
+        if password != password_confirm:
+            raise serializers.ValidationError({
+                "password_confirm": "Passwords do not match."
+            })
 
         return attrs
 
+    @transaction.atomic
     def create(self, validated_data):
-        from django.db import transaction
+        password = validated_data.pop("password")
 
-        validated_data.pop(
-            "password_confirm"
+        
+        user = User.objects.create_user(
+            password=password,
+            **validated_data,
         )
-
-        password = validated_data.pop(
-            "password"
-        )
-
-        with transaction.atomic():
-            user = User.objects.create_user(
-                password=password,
-                **validated_data,
-            )
-
-            Profile.objects.create(
-                user=user
-            )
 
         return user
 
@@ -616,9 +336,9 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
+            "email",
             "first_name",
             "last_name",
-            "email",
         ]
 
     def validate_email(self, value):
@@ -638,18 +358,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
                 "A user with this email already exists."
             )
 
-        from .services import is_identifier_banned
-
-        if is_identifier_banned(
-            identifier_type=BannedIdentifier.TYPE_EMAIL,
-            identifier=value,
-        ):
-            raise serializers.ValidationError(
-                "This email address cannot be used."
-            )
-
         return value
-
 
 class PasswordResetRequestSerializer(
     serializers.Serializer
@@ -669,6 +378,7 @@ class PasswordResetConfirmSerializer(
     password = serializers.CharField(
         write_only=True,
         min_length=8,
+        validators=[validate_password],
     )
 
     password_confirm = serializers.CharField(
@@ -676,77 +386,66 @@ class PasswordResetConfirmSerializer(
     )
 
     def validate(self, attrs):
-        if (
-            attrs["password"]
-            != attrs["password_confirm"]
-        ):
-            raise serializers.ValidationError(
-                {
-                    "password_confirm":
-                        "Passwords do not match."
-                }
-            )
-
-        try:
-            uid = force_str(
-                urlsafe_base64_decode(
-                    attrs["uid"]
-                )
-            )
-
-            user = User.objects.get(
-                pk=uid
-            )
-        except (
-            ValueError,
-            TypeError,
-            OverflowError,
-            User.DoesNotExist,
-        ):
-            raise serializers.ValidationError(
-                {
-                    "detail":
-                        "Invalid password reset link."
-                }
-            )
-
-        from django.contrib.auth.tokens import (
-            default_token_generator,
+        password = attrs.get("password")
+        password_confirm = attrs.get(
+            "password_confirm"
         )
 
-        if not default_token_generator.check_token(
-            user,
-            attrs["token"],
-        ):
-            raise serializers.ValidationError(
-                {
-                    "detail":
-                        "This password reset link is invalid or expired."
-                }
-            )
-
-        self.user = user
+        if password != password_confirm:
+            raise serializers.ValidationError({
+                "password_confirm": "Passwords do not match."
+            })
 
         return attrs
 
     def save(self, **kwargs):
-        self.user.set_password(
-            self.validated_data["password"]
+        from django.contrib.auth.tokens import (
+            default_token_generator,
+        )
+        from django.utils.http import (
+            urlsafe_base64_decode,
         )
 
-        self.user.save(
+        uid = self.validated_data["uid"]
+        token = self.validated_data["token"]
+        password = self.validated_data["password"]
+
+        try:
+            uid_int = urlsafe_base64_decode(uid).decode()
+            user = User.objects.get(pk=uid_int)
+        except (
+            TypeError,
+            ValueError,
+            OverflowError,
+            User.DoesNotExist,
+        ):
+            raise serializers.ValidationError({
+                "detail": "Invalid password reset link."
+            })
+
+        if not default_token_generator.check_token(
+            user,
+            token,
+        ):
+            raise serializers.ValidationError({
+                "detail": "Invalid or expired password reset link."
+            })
+
+        user.set_password(password)
+
+        user.save(
             update_fields=["password"]
         )
 
-        return self.user
+        return user
 
 
 class FollowSerializer(serializers.ModelSerializer):
-    follower = UserPublicSerializer(
+    follower = UserBasicSerializer(
         read_only=True
     )
 
-    following = UserPublicSerializer(
+    following = UserBasicSerializer(
         read_only=True
     )
 
@@ -766,14 +465,16 @@ class VerificationRequestCreateSerializer(
 ):
     class Meta:
         model = VerificationRequest
-        fields = ["reason"]
+        fields = [
+            "reason",
+        ]
 
     def validate_reason(self, value):
         value = value.strip()
 
         if not value:
             raise serializers.ValidationError(
-                "Verification reason is required."
+                "Please provide a reason for verification."
             )
 
         return value
@@ -782,11 +483,11 @@ class VerificationRequestCreateSerializer(
 class VerificationRequestSerializer(
     serializers.ModelSerializer
 ):
-    user = UserPublicSerializer(
+    user = UserBasicSerializer(
         read_only=True
     )
 
-    reviewed_by = UserPublicSerializer(
+    reviewed_by = UserBasicSerializer(
         read_only=True
     )
 
@@ -802,24 +503,39 @@ class VerificationRequestSerializer(
             "requested_at",
             "reviewed_at",
         ]
-        read_only_fields = fields
+        read_only_fields = [
+            "id",
+            "user",
+            "status",
+            "admin_note",
+            "reviewed_by",
+            "requested_at",
+            "reviewed_at",
+        ]
 
 
 class VerificationReviewSerializer(
-    serializers.Serializer
+    serializers.ModelSerializer
 ):
-    status = serializers.ChoiceField(
-        choices=[
+    class Meta:
+        model = VerificationRequest
+        fields = [
+            "status",
+            "admin_note",
+        ]
+
+    def validate_status(self, value):
+        allowed = [
             VerificationRequest.STATUS_APPROVED,
             VerificationRequest.STATUS_REJECTED,
         ]
-    )
 
-    admin_note = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        max_length=2000,
-    )
+        if value not in allowed:
+            raise serializers.ValidationError(
+                "Status must be approved or rejected."
+            )
+
+        return value
 
     def validate_admin_note(self, value):
         return value.strip()
@@ -859,14 +575,12 @@ class ReportCreateSerializer(
         return value.strip()
 
 
-class ReportSerializer(
-    serializers.ModelSerializer
-):
-    reporter = UserPublicSerializer(
+class ReportSerializer(serializers.ModelSerializer):
+    reporter = UserBasicSerializer(
         read_only=True
     )
 
-    reviewed_by = UserPublicSerializer(
+    reviewed_by = UserBasicSerializer(
         read_only=True
     )
 
@@ -885,25 +599,41 @@ class ReportSerializer(
             "created_at",
             "reviewed_at",
         ]
-        read_only_fields = fields
+        read_only_fields = [
+            "id",
+            "reporter",
+            "status",
+            "reviewed_by",
+            "admin_note",
+            "created_at",
+            "reviewed_at",
+        ]
 
 
 class ReportReviewSerializer(
-    serializers.Serializer
+    serializers.ModelSerializer
 ):
-    status = serializers.ChoiceField(
-        choices=[
+    class Meta:
+        model = Report
+        fields = [
+            "status",
+            "admin_note",
+        ]
+
+    def validate_status(self, value):
+        allowed = [
+            Report.STATUS_PENDING,
             Report.STATUS_UNDER_REVIEW,
             Report.STATUS_RESOLVED,
             Report.STATUS_DISMISSED,
         ]
-    )
 
-    admin_note = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        max_length=3000,
-    )
+        if value not in allowed:
+            raise serializers.ValidationError(
+                "Invalid report status."
+            )
+
+        return value
 
     def validate_admin_note(self, value):
         return value.strip()
@@ -917,8 +647,23 @@ class UserRestrictionCreateSerializer(
         fields = [
             "restriction_type",
             "reason",
+            "starts_at",
             "expires_at",
         ]
+
+    def validate_restriction_type(self, value):
+        allowed = [
+            UserRestriction.TYPE_WARNING,
+            UserRestriction.TYPE_SUSPENSION,
+            UserRestriction.TYPE_BAN,
+        ]
+
+        if value not in allowed:
+            raise serializers.ValidationError(
+                "Invalid restriction type."
+            )
+
+        return value
 
     def validate_reason(self, value):
         value = value.strip()
@@ -930,15 +675,31 @@ class UserRestrictionCreateSerializer(
 
         return value
 
+    def validate(self, attrs):
+        starts_at = attrs.get("starts_at")
+        expires_at = attrs.get("expires_at")
+
+        if (
+            starts_at
+            and expires_at
+            and expires_at <= starts_at
+        ):
+            raise serializers.ValidationError({
+                "expires_at":
+                    "Expiration time must be after the start time."
+            })
+
+        return attrs
+
 
 class UserRestrictionSerializer(
     serializers.ModelSerializer
 ):
-    user = UserPublicSerializer(
+    user = UserBasicSerializer(
         read_only=True
     )
 
-    created_by = UserPublicSerializer(
+    created_by = UserBasicSerializer(
         read_only=True
     )
 
@@ -956,8 +717,14 @@ class UserRestrictionSerializer(
             "created_at",
             "updated_at",
         ]
-        read_only_fields = fields
-
+        read_only_fields = [
+            "id",
+            "user",
+            "created_by",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
 
 class BannedIdentifierCreateSerializer(
     serializers.ModelSerializer
@@ -968,8 +735,17 @@ class BannedIdentifierCreateSerializer(
             "identifier_type",
             "identifier",
             "reason",
+            "starts_at",
             "expires_at",
         ]
+
+    def validate_identifier_type(self, value):
+        if value != BannedIdentifier.TYPE_EMAIL:
+            raise serializers.ValidationError(
+                "Only email identifiers can currently be banned."
+            )
+
+        return value
 
     def validate_identifier(self, value):
         return value.strip().lower()
@@ -979,16 +755,32 @@ class BannedIdentifierCreateSerializer(
 
         if not value:
             raise serializers.ValidationError(
-                "Ban reason is required."
+                "A reason is required."
             )
 
         return value
+
+    def validate(self, attrs):
+        starts_at = attrs.get("starts_at")
+        expires_at = attrs.get("expires_at")
+
+        if (
+            starts_at
+            and expires_at
+            and expires_at <= starts_at
+        ):
+            raise serializers.ValidationError({
+                "expires_at":
+                    "Expiration time must be after the start time."
+            })
+
+        return attrs
 
 
 class BannedIdentifierSerializer(
     serializers.ModelSerializer
 ):
-    created_by = UserPublicSerializer(
+    created_by = UserBasicSerializer(
         read_only=True
     )
 
@@ -1006,17 +798,23 @@ class BannedIdentifierSerializer(
             "created_at",
             "updated_at",
         ]
-        read_only_fields = fields
+        read_only_fields = [
+            "id",
+            "created_by",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
 
 
 class AdminAuditLogSerializer(
     serializers.ModelSerializer
 ):
-    admin = UserPublicSerializer(
+    admin = UserBasicSerializer(
         read_only=True
     )
 
-    target_user = UserPublicSerializer(
+    target_user = UserBasicSerializer(
         read_only=True
     )
 
@@ -1036,9 +834,6 @@ class AdminAuditLogSerializer(
         read_only_fields = fields
 
 
-# ============================================================
-# CONTACT MESSAGES
-# ============================================================
 
 class ContactMessageCreateSerializer(
     serializers.ModelSerializer
@@ -1063,14 +858,7 @@ class ContactMessageCreateSerializer(
         return value
 
     def validate_email(self, value):
-        value = value.strip().lower()
-
-        if not value:
-            raise serializers.ValidationError(
-                "Email is required."
-            )
-
-        return value
+        return value.strip().lower()
 
     def validate_subject(self, value):
         value = value.strip()
@@ -1093,10 +881,38 @@ class ContactMessageCreateSerializer(
         return value
 
 
+class ContactMessageReviewSerializer(
+    serializers.ModelSerializer
+):
+    class Meta:
+        model = ContactMessage
+        fields = [
+            "status",
+            "admin_note",
+        ]
+
+    def validate_status(self, value):
+        allowed = [
+            ContactMessage.STATUS_NEW,
+            ContactMessage.STATUS_UNDER_REVIEW,
+            ContactMessage.STATUS_RESOLVED,
+        ]
+
+        if value not in allowed:
+            raise serializers.ValidationError(
+                "Invalid contact message status."
+            )
+
+        return value
+
+    def validate_admin_note(self, value):
+        return value.strip()
+
+
 class ContactMessageSerializer(
     serializers.ModelSerializer
 ):
-    reviewed_by = UserPublicSerializer(
+    reviewed_by = UserBasicSerializer(
         read_only=True
     )
 
@@ -1115,25 +931,10 @@ class ContactMessageSerializer(
             "created_at",
             "updated_at",
         ]
-        read_only_fields = fields
-
-
-class ContactMessageReviewSerializer(
-    serializers.Serializer
-):
-    status = serializers.ChoiceField(
-        choices=[
-            ContactMessage.STATUS_NEW,
-            ContactMessage.STATUS_UNDER_REVIEW,
-            ContactMessage.STATUS_RESOLVED,
+        read_only_fields = [
+            "id",
+            "reviewed_by",
+            "reviewed_at",
+            "created_at",
+            "updated_at",
         ]
-    )
-
-    admin_note = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        max_length=3000,
-    )
-
-    def validate_admin_note(self, value):
-        return value.strip()
